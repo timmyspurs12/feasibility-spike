@@ -1,0 +1,23 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# JavaScript build/install artifacts
+node_modules/
+dist/
+coverage/
+frontend/node_modules/
+frontend/dist/
+
+# Local environment and credentials
+.env
+.env.*
+!**/.env.example
+
+# Editor / OS files
+.DS_Store
+.vscode/
+.idea/
