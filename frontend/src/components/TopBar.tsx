@@ -15,6 +15,8 @@ type Props = {
   contractAddress: string;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  walletName: string;
+  onChangeWallet: () => void;
 };
 
 export function TopBar({
@@ -31,6 +33,8 @@ export function TopBar({
   contractAddress,
   theme,
   onToggleTheme,
+  walletName,
+  onChangeWallet,
 }: Props) {
   return (
     <header className="topbar">
@@ -77,8 +81,16 @@ export function TopBar({
           </button>
         )}
         {walletAddress ? (
-          <button className="wallet-pill" type="button" title={`Connected as ${role}: ${walletAddress}`}>
+          <button
+            className="wallet-pill"
+            type="button"
+            onClick={onChangeWallet}
+            disabled={busy || isConnecting}
+            title={`Connected via ${walletName} as ${role}: ${walletAddress}. Click to change wallet.`}
+            aria-label={`Change wallet; currently connected via ${walletName}`}
+          >
             <span className="wallet-state-dot" />
+            <span className="wallet-provider-name">{walletName}</span>
             <span className="wallet-address">{shortAddress(walletAddress, 6, 4)}</span>
             <span className="wallet-role">{role}</span>
           </button>
@@ -86,12 +98,12 @@ export function TopBar({
           <button
             className="connect-button"
             onClick={onConnect}
-            disabled={!walletAvailable || isConnecting || busy}
+            disabled={isConnecting || busy}
             type="button"
-            title={!walletAvailable ? 'No EIP-1193 wallet was detected' : undefined}
+            title={!walletAvailable ? 'Scan this page for installed EIP-1193 wallet extensions' : undefined}
           >
             <Icon name="wallet" size={15} />
-            {isConnecting ? 'Connecting…' : walletAvailable ? 'Connect wallet' : 'Wallet unavailable'}
+            {isConnecting ? 'Connecting…' : walletAvailable ? 'Choose wallet' : 'Scan wallets'}
           </button>
         )}
       </div>

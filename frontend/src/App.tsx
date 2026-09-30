@@ -13,6 +13,7 @@ import { OpenCampaignDialog } from './components/OpenCampaignDialog';
 import { ProductEvidence } from './components/ProductEvidence';
 import { SettlementPanel } from './components/SettlementPanel';
 import { TopBar } from './components/TopBar';
+import { WalletPickerDialog } from './components/WalletPickerDialog';
 import {
   DEFAULT_CAMPAIGN_ADDRESS,
   DEFAULT_REVIEW_TRANSACTION,
@@ -37,7 +38,9 @@ import {
   statusName,
   watchTransaction,
 } from './lib/genlayer';
+import { discoverInjectedWallets } from './lib/wallets';
 import type {
+  InjectedWalletOption,
   ContractMethod,
   CampaignSnapshot,
   Eip1193Provider,
@@ -78,6 +81,10 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [provider, setProvider] = useState<Eip1193Provider | null>(null);
+  const [walletOptions, setWalletOptions] = useState<InjectedWalletOption[]>([]);
+  const [selectedWallet, setSelectedWallet] = useState<InjectedWalletOption | null>(null);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
+  const [walletDiscoveryComplete, setWalletDiscoveryComplete] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [chainIdHex, setChainIdHex] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -93,7 +100,7 @@ export default function App() {
   const [openDialogError, setOpenDialogError] = useState('');
   const [dialogError, setDialogError] = useState('');
 
-  const walletAvailable = Boolean(provider);
+  const walletAvailable = walletOptions.length > 0 || Boolean(provider) || !walletDiscoveryComplete;
   const correctNetwork = Boolean(walletAddress && isCorrectNetwork(chainIdHex));
 
   useLayoutEffect(() => {
@@ -154,19 +161,44 @@ export default function App() {
   }, [contractAddress, fetchSnapshot]);
 
   useEffect(() => {
-    const currentProvider = getEthereumProvider();
-    setProvider(currentProvider);
-    if (!currentProvider) return;
+    let cancelled = false;
+    const discoverAndRestore = async () => {
+      const wallets = await discoverInjectedWallets();
+      if (cancelled) return;
+      setWalletOptions(wallets);
+      setWalletDiscoveryComplete(true);
 
-    let isMounted = true;
-    currentProvider.request({ method: 'eth_accounts' })
+      for (const wallet of wallets) {
+        try {
+          const accounts = await wallet.provider.request({ method: 'eth_accounts' });
+          if (!Array.isArray(accounts) || typeof accounts[0] !== 'string') continue;
+          const chain = await wallet.provider.request({ method: 'eth_chainId' });
+          if (cancelled) return;
+          setProvider(wallet.provider);
+          setSelectedWallet(wallet);
+          setWalletAddress(accounts[0]);
+          setChainIdHex(typeof chain === 'string' ? chain : null);
+          break;
+        } catch {
+          // An installed extension can be locked or unavailable; leave it selectable for an explicit connect.
+        }
+      }
+    };
+    void discoverAndRestore().catch(() => setWalletDiscoveryComplete(true));
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!provider) return;
+    let active = true;
+    provider.request({ method: 'eth_accounts' })
       .then((accounts) => {
-        if (isMounted && Array.isArray(accounts)) setWalletAddress(typeof accounts[0] === 'string' ? accounts[0] : null);
+        if (active && Array.isArray(accounts)) setWalletAddress(typeof accounts[0] === 'string' ? accounts[0] : null);
       })
       .catch(() => undefined);
-    currentProvider.request({ method: 'eth_chainId' })
+    provider.request({ method: 'eth_chainId' })
       .then((chain) => {
-        if (isMounted && typeof chain === 'string') setChainIdHex(chain);
+        if (active && typeof chain === 'string') setChainIdHex(chain);
       })
       .catch(() => undefined);
 
@@ -177,14 +209,14 @@ export default function App() {
     const chainChanged = (chain: unknown) => {
       setChainIdHex(typeof chain === 'string' ? chain : null);
     };
-    currentProvider.on?.('accountsChanged', accountChanged);
-    currentProvider.on?.('chainChanged', chainChanged);
+    provider.on?.('accountsChanged', accountChanged);
+    provider.on?.('chainChanged', chainChanged);
     return () => {
-      isMounted = false;
-      currentProvider.removeListener?.('accountsChanged', accountChanged);
-      currentProvider.removeListener?.('chainChanged', chainChanged);
+      active = false;
+      provider.removeListener?.('accountsChanged', accountChanged);
+      provider.removeListener?.('chainChanged', chainChanged);
     };
-  }, []);
+  }, [provider]);
 
   useEffect(() => {
     if (!busyAction) void refreshSnapshot(false);
@@ -219,25 +251,45 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [readClient, walletAddress]);
 
-  const connectWallet = async () => {
+  const openWalletPicker = async () => {
     setNotice(null);
-    const currentProvider = provider ?? getEthereumProvider();
-    if (!currentProvider) {
-      setNotice({ kind: 'error', title: 'Wallet not detected', message: 'Install an EIP-1193 wallet such as MetaMask, then reload this workspace. Public contract reads remain available.' });
-      return;
-    }
-    setIsConnecting(true);
     try {
-      const accounts = await currentProvider.request({ method: 'eth_requestAccounts' });
-      const chain = await currentProvider.request({ method: 'eth_chainId' });
-      setProvider(currentProvider);
-      setWalletAddress(Array.isArray(accounts) && typeof accounts[0] === 'string' ? accounts[0] : null);
+      const wallets = await discoverInjectedWallets();
+      setWalletOptions(wallets);
+      setWalletDiscoveryComplete(true);
+      if (!wallets.length) {
+        setNotice({ kind: 'error', title: 'No wallet extensions detected', message: 'Enable the wallet extensions for this site and rescan. Wallets must expose EIP-1193 or EIP-6963 to appear.' });
+        return;
+      }
+      setWalletPickerOpen(true);
+    } catch (error) {
+      setNotice({ kind: 'error', title: 'Wallet scan failed', message: humanizeTransactionError(error) });
+    }
+  };
+
+  const connectWallet = async () => {
+    await openWalletPicker();
+  };
+
+  const connectWithWallet = async (wallet: InjectedWalletOption) => {
+    setIsConnecting(true);
+    setNotice(null);
+    try {
+      const accounts = await wallet.provider.request({ method: 'eth_requestAccounts' });
+      const account = Array.isArray(accounts) && typeof accounts[0] === 'string' ? accounts[0] : null;
+      if (!account) throw new Error('The selected wallet did not grant an account. Choose an account in the extension and try again.');
+      const chain = await wallet.provider.request({ method: 'eth_chainId' });
+      setProvider(wallet.provider);
+      setSelectedWallet(wallet);
+      setWalletAddress(account);
       setChainIdHex(typeof chain === 'string' ? chain : null);
+      setWalletPickerOpen(false);
       if (typeof chain === 'string' && !isCorrectNetwork(chain)) {
-        setNotice({ kind: 'info', title: 'Wallet connected on another network', message: 'Switch to Studionet (chain 61999) before signing campaign transactions.' });
+        setNotice({ kind: 'info', title: `${wallet.name} connected on another network`, message: 'Switch to Studionet (chain 61999) before signing campaign transactions.' });
       }
     } catch (error) {
-      setNotice({ kind: 'error', title: 'Wallet connection not completed', message: humanizeTransactionError(error) });
+      setWalletPickerOpen(false);
+      setNotice({ kind: 'error', title: `${wallet.name} connection not completed`, message: humanizeTransactionError(error) });
     } finally {
       setIsConnecting(false);
     }
@@ -735,6 +787,8 @@ export default function App() {
         contractAddress={contractAddress}
         theme={theme}
         onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+        walletName={selectedWallet?.name ?? 'Browser wallet'}
+        onChangeWallet={() => void openWalletPicker()}
       />
 
       <main className="workspace-frame" id="main-content">
@@ -900,6 +954,15 @@ export default function App() {
         error={openDialogError}
         onClose={() => setOpenDialogOpen(false)}
         onOpen={openCampaign}
+      />
+      <WalletPickerDialog
+        open={walletPickerOpen}
+        wallets={walletOptions}
+        selectedWalletId={selectedWallet?.id}
+        busy={isConnecting}
+        onSelect={(wallet) => void connectWithWallet(wallet)}
+        onClose={() => setWalletPickerOpen(false)}
+        onRescan={() => void openWalletPicker()}
       />
     </div>
   );

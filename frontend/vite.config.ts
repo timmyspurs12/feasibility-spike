@@ -15,5 +15,6 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: ['.e2b.app'],
   },
-  // Use default chunking; manual GenLayer chunks caused the production constructor error.
+  // Use Vite/Rolldown's default chunking. Splitting genlayer-js into capped manual chunks
+  // caused an imported class to resolve to a non-constructor in the production browser build.
 });

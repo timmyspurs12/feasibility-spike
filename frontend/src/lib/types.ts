@@ -151,6 +151,14 @@ export interface GenLayerTransaction {
   [key: string]: unknown;
 }
 
+export interface InjectedWalletOption {
+  id: string;
+  name: string;
+  rdns?: string;
+  icon?: string;
+  provider: Eip1193Provider;
+}
+
 export interface Eip1193Provider {
   request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
