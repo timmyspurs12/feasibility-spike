@@ -15,31 +15,5 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: ['.e2b.app'],
   },
-  build: {
-    rolldownOptions: {
-      output: {
-        codeSplitting: {
-          groups: [
-            {
-              name: 'react-runtime',
-              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
-              priority: 10,
-            },
-            {
-              name: 'genlayer-client',
-              test: /node_modules[\\/]genlayer-js[\\/]/,
-              maxSize: 420_000,
-              priority: 5,
-            },
-            {
-              name: 'vendor',
-              test: /node_modules[\\/]/,
-              maxSize: 420_000,
-              priority: 1,
-            },
-          ],
-        },
-      },
-    },
-  },
+  // Use default chunking; manual GenLayer chunks caused the production constructor error.
 });
